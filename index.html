@@ -42,6 +42,168 @@
         #output blockquote { border-left: 4px solid #5f27cd; padding-left: 10px; margin-left: 20px; color: #c8d6e5; }
     </style>
 </head>
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LM Studio Web Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/plugins/autoloader/prism-autoloader.min.js"></script>
+    <style>
+        /* ... (Keep existing styles) ... */
+        
+        #sidebar {
+            height: 100vh;
+            overflow-y: auto;
+            padding: 20px;
+            background-color: #2a2a2a;
+            border-right: 1px solid #3a3a3a;
+        }
+        .history-item {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #3a3a3a;
+            border-radius: 5px;
+        }
+        .history-prompt {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .history-response {
+            font-style: italic;
+            color: #c8d6e5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-md-3" id="sidebar">
+                <h3>Conversation History</h3>
+                <button id="clearHistoryBtn" class="btn btn-warning mb-3">Clear History</button>
+                <div id="historyContainer">
+                    {% for item in conversation_history %}
+                    <div class="history-item">
+                        <div class="history-prompt">{{ item.prompt }}</div>
+                        <div class="history-response">{{ item.response[:100] }}...</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="col-md-9">
+                <div class="container mt-5">
+                    <h1 class="mb-4">LM Studio Web Interface</h1>
+                    <form id="generate-form">
+                        <div class="mb-3">
+                            <select class="form-select" name="model" required>
+                                <option value="">Select a model</option>
+                                {% for model in models %}
+                                <option value="{{ model.id }}">{{ model.id }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <textarea class="form-control" name="prompt" rows="4" required placeholder="Enter your prompt here"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="generateBtn">Generate</button>
+                        <button type="button" class="btn btn-danger" id="stopBtn" style="display: none;">Stop Generation</button>
+                    </form>
+                    <div id="output" class="mt-4"></div>
+                    <button id="copyButton" class="btn btn-secondary mt-3" style="display: none;">Copy Response</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ... (Keep existing JavaScript code) ...
+
+        document.getElementById('generate-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const form = e.target;
+            output.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div> Generating...';
+            fullResponse = '';
+            copyButton.style.display = 'none';
+            generateBtn.style.display = 'none';
+            stopBtn.style.display = 'inline-block';
+
+            currentSessionId = Date.now().toString();
+            const formData = new FormData(form);
+            formData.append('session_id', currentSessionId);
+
+            fetch('/generate', {
+                method: 'POST',
+                body: formData
+            }).then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                function read() {
+                    return reader.read().then(({ done, value }) => {
+                        if (done) {
+                            copyButton.style.display = 'block';
+                            generateBtn.style.display = 'inline-block';
+                            stopBtn.style.display = 'none';
+                            updateHistorySidebar(formData.get('prompt'), fullResponse);
+                            return;
+                        }
+
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n');
+                        lines.forEach(line => {
+                            if (line.startsWith('data: ')) {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.content) {
+                                    fullResponse += data.content;
+                                    output.innerHTML = marked.parse(fullResponse);
+                                    Prism.highlightAll();
+                                }
+                            }
+                        });
+
+                        return read();
+                    });
+                }
+
+                return read();
+            }).catch(error => {
+                output.innerHTML += '<div class="error">Error: ' + error.message + '</div>';
+                generateBtn.style.display = 'inline-block';
+                stopBtn.style.display = 'none';
+            });
+        });
+
+        function updateHistorySidebar(prompt, response) {
+            const historyContainer = document.getElementById('historyContainer');
+            const historyItem = document.createElement('div');
+            historyItem.className = 'history-item';
+            historyItem.innerHTML = `
+                <div class="history-prompt">${prompt}</div>
+                <div class="history-response">${response.slice(0, 100)}...</div>
+            `;
+            historyContainer.prepend(historyItem);
+        }
+
+        document.getElementById('clearHistoryBtn').addEventListener('click', function() {
+            fetch('/clear_history', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'cleared') {
+                        document.getElementById('historyContainer').innerHTML = '';
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        });
+
+        // ... (Keep other existing JavaScript code) ...
+    </script>
+</body>
+</html>
 <body>
     <div class="container mt-5">
         <h1 class="mb-4">LM Studio Web Interface</h1>

@@ -1,12 +1,4 @@
-###Copyright <YEAR> <COPYRIGHT HOLDER>
-
-#Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-#The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-#THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, #WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.# app.py
-
-
+# app.py
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify
 import requests
 import json
@@ -110,30 +102,36 @@ class LMStudioProxy:
                     logging.warning(f"Unexpected line format: {line}")
                     yield f"Warning: Unexpected response format from server"
 
-app = Flask(__name__)
 lm_proxy = LMStudioProxy()
 generators = {}
+app = Flask(__name__)
+session = {}
+uuid = __import__('uuid')
 
-@app.route('/')
-def index():
-    models = lm_proxy.get_models()
-    return render_template('index.html', models=models['data'])
-
-@app.route('/generate', methods=['GET', 'POST'])
+@app.route('/generate', methods=['POST'])
 def generate():
-    model = request.args.get('model', '')
-    prompt = request.args.get('prompt', '')
-    session_id = request.args.get('session_id', '')
+    model = request.form.get('model', '')
+    prompt = request.form.get('prompt', '')
+    session_id = request.form.get('session_id', '')
 
     logging.info(f"Generating with model: {model}, prompt: {prompt}, session_id: {session_id}")
 
     def generate_stream():
+        full_response = ""
         try:
             stoppable_gen = StoppableGenerator(lm_proxy.generate(model, prompt))
             generators[session_id] = stoppable_gen
             for content in stoppable_gen:
+                full_response += content
                 yield f"data: {json.dumps({'content': content})}\n\n"
             yield "data: [DONE]\n\n"
+            
+            # Add the conversation to the history
+            session['conversation_history'].append({
+                'prompt': prompt,
+                'response': full_response
+            })
+            session.modified = True
         except Exception as e:
             logging.error(f"Error during generation: {str(e)}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -142,6 +140,7 @@ def generate():
                 del generators[session_id]
 
     return Response(stream_with_context(generate_stream()), content_type='text/event-stream')
+
 
 @app.route('/stop', methods=['POST'])
 def stop_generation():
@@ -156,6 +155,22 @@ def stop_generation():
 def handle_exception(e):
     logging.error(f"Unhandled exception: {str(e)}")
     return jsonify(error=str(e)), 500
+
+@app.route('/clear_history', methods=['POST'])
+def clear_history():
+    session['conversation_history'] = []
+    session.modified = True
+    return jsonify({"status": "cleared"}), 200
+
+@app.route('/')
+def index():
+    if 'user_id' not in session:
+        session['user_id'] = str(uuid.uuid4())
+    if 'conversation_history' not in session:
+        session['conversation_history'] = []
+    
+    models = lm_proxy.get_models()
+    return render_template('index.html', models=models['data'], conversation_history=session['conversation_history'])
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
