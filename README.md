@@ -9,10 +9,8 @@
 
 
 
-1. index HTML goes in templates folder
+<strong><h1>1. index HTML goes in templates folder</h1></strong>
 
 2. run app.py in a virutal env using python.
 
-3. requirements.txt not setup yet
-
-4. requires LLM studio server backend running 
+4. requires LLM studio server backend running (download here: https://lmstudio.ai/)
